@@ -603,7 +603,13 @@ def setup_bot():
         
     logger.info("Starting Telegram bot...")
     
-    # Start the bot polling in a separate thread
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    # Generate a unique session name to prevent conflicts with multiple bot instances
+    import uuid
+    import os
+    session_name = f"birthday_bot_{uuid.uuid4().hex[:8]}_{os.getpid()}"
+    logger.info(f"Using session name: {session_name}")
+    
+    # Start the bot polling in a separate thread with a unique session name
+    bot.infinity_polling(timeout=10, long_polling_timeout=5, allowed_updates=["message", "callback_query"], session_name=session_name)
     
     return bot

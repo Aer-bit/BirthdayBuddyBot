@@ -49,9 +49,9 @@ if __name__ == "__main__":
         # Default to running Flask if we can't detect
         is_telegram_bot = False
     
-    # Check which workflow we're running in
-    if "telegram_bot" in workflow_name.lower():
-        # In the telegram_bot workflow, only run the bot if TELEGRAM_TOKEN is available
+    # Run the appropriate application based on what we detected
+    if is_telegram_bot:
+        # If this is the telegram_bot process, run the bot if TELEGRAM_TOKEN is available
         if not os.environ.get("TELEGRAM_TOKEN"):
             logger.error("TELEGRAM_TOKEN environment variable is not set. The bot will not work properly.")
             logger.info("Set the TELEGRAM_TOKEN environment variable with your Telegram Bot API token")
@@ -59,9 +59,9 @@ if __name__ == "__main__":
         else:
             # Start the scheduler for birthday notifications
             start_scheduler()
-            logger.info("Running Telegram bot in telegram_bot workflow")
+            logger.info("Running Telegram bot")
             run_bot()
     else:
         # In any other workflow (like Start application), only run the Flask app
-        logger.info("Running Flask app in Start application workflow")
+        logger.info("Running Flask app")
         app.run(host="0.0.0.0", port=5000, debug=False)
