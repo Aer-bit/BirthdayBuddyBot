@@ -12,7 +12,6 @@ dependencies = [
     "pytelegrambotapi>=4.26.0",
     "python-telegram-bot>=22.0",
     "scheduler>=0.8.8",
-    "sqlalchemy>=2.0.40",
     "telegram>=0.0.1",
     "tlgbotfwk>=0.4.61",
 ]
