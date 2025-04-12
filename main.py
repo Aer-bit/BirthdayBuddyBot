@@ -10,13 +10,24 @@ logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Create a Flask app context for the bot and scheduler threads
+app_context = app.app_context()
+
 def run_flask_app():
     """Run the Flask app in a separate thread."""
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
 
 def run_bot():
     """Run the Telegram bot."""
+    # Push the app context in this thread
+    app_context.push()
     setup_bot()
+
+def run_scheduler():
+    """Run the scheduler in the app context."""
+    # Push the app context in this thread
+    app_context.push()
+    start_scheduler()
 
 if __name__ == "__main__":
     logger.info("Starting Telegram Birthday Bot")
@@ -29,8 +40,10 @@ if __name__ == "__main__":
         # Run only the Flask app if no token is available
         app.run(host="0.0.0.0", port=5000, debug=True)
     else:
-        # Start the scheduler for birthday notifications
-        start_scheduler()
+        # Start the scheduler for birthday notifications in its own thread
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        logger.info("Birthday notification scheduler started in its own thread")
         
         # Start Flask app in a separate thread
         flask_thread = threading.Thread(target=run_flask_app, daemon=True)

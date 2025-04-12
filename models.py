@@ -78,7 +78,8 @@ class Friend(db.Model):
 
 def get_user(telegram_id: int, username: str = None) -> User:
     """Get or create a user by telegram_id"""
-    with db.session() as session:
+    session = db.session()
+    try:
         user = session.query(User).filter(User.telegram_id == telegram_id).first()
         
         if not user:
@@ -88,12 +89,25 @@ def get_user(telegram_id: int, username: str = None) -> User:
             session.refresh(user)
         
         return user
+    except Exception as e:
+        logger.error(f"Error getting user: {e}")
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def get_all_users() -> List[User]:
     """Get all users"""
-    with db.session() as session:
+    session = db.session()
+    try:
         return session.query(User).all()
+    except Exception as e:
+        logger.error(f"Error getting all users: {e}")
+        session.rollback()
+        return []
+    finally:
+        session.close()
 
 
 def get_upcoming_birthdays(days_ahead: int = 0) -> Dict[int, List[Tuple[Friend, int]]]:
@@ -103,8 +117,9 @@ def get_upcoming_birthdays(days_ahead: int = 0) -> Dict[int, List[Tuple[Friend, 
     Only considers birthdays on the actual day (days_until == 0)
     """
     result = {}
+    session = db.session()
     
-    with db.session() as session:
+    try:
         users = session.query(User).all()
         
         for user in users:
@@ -121,12 +136,18 @@ def get_upcoming_birthdays(days_ahead: int = 0) -> Dict[int, List[Tuple[Friend, 
             if user_birthdays:
                 result[user.telegram_id] = user_birthdays
                 
-    return result
+        return result
+    except Exception as e:
+        logger.error(f"Error getting upcoming birthdays: {e}")
+        return {}
+    finally:
+        session.close()
 
 
-def save_friend(user_id: int, name: str, birth_date: datetime) -> Friend:
+def save_friend(user_id: int, name: str, birth_date: datetime) -> Optional[Friend]:
     """Create or update a friend's birthday"""
-    with db.session() as session:
+    session = db.session()
+    try:
         user = session.query(User).filter(User.telegram_id == user_id).first()
         if not user:
             logger.error(f"User with telegram_id {user_id} not found")
@@ -149,11 +170,18 @@ def save_friend(user_id: int, name: str, birth_date: datetime) -> Friend:
         session.commit()
         session.refresh(friend)
         return friend
+    except Exception as e:
+        logger.error(f"Error saving friend: {e}")
+        session.rollback()
+        return None
+    finally:
+        session.close()
 
 
 def delete_friend(user_id: int, friend_name: str) -> bool:
     """Delete a friend by name"""
-    with db.session() as session:
+    session = db.session()
+    try:
         user = session.query(User).filter(User.telegram_id == user_id).first()
         if not user:
             logger.error(f"User with telegram_id {user_id} not found")
@@ -170,22 +198,36 @@ def delete_friend(user_id: int, friend_name: str) -> bool:
             return True
         
         return False
+    except Exception as e:
+        logger.error(f"Error deleting friend: {e}")
+        session.rollback()
+        return False
+    finally:
+        session.close()
 
 
 def get_user_friends(user_id: int) -> List[Friend]:
     """Get all friends for a user"""
-    with db.session() as session:
+    session = db.session()
+    try:
         user = session.query(User).filter(User.telegram_id == user_id).first()
         if not user:
             logger.error(f"User with telegram_id {user_id} not found")
             return []
         
-        return session.query(Friend).filter(Friend.user_id == user.id).all()
+        friends = session.query(Friend).filter(Friend.user_id == user.id).all()
+        return friends
+    except Exception as e:
+        logger.error(f"Error getting user friends: {e}")
+        return []
+    finally:
+        session.close()
 
 
 def update_user_state(user_id: int, state: str, temp_data: Dict = None) -> None:
     """Update user state and temp data"""
-    with db.session() as session:
+    session = db.session()
+    try:
         user = session.query(User).filter(User.telegram_id == user_id).first()
         if not user:
             logger.error(f"User with telegram_id {user_id} not found")
@@ -196,14 +238,25 @@ def update_user_state(user_id: int, state: str, temp_data: Dict = None) -> None:
             user.set_temp_data(temp_data)
         
         session.commit()
+    except Exception as e:
+        logger.error(f"Error updating user state: {e}")
+        session.rollback()
+    finally:
+        session.close()
 
 
 def get_user_state(user_id: int) -> Tuple[str, Dict]:
     """Get user state and temp data"""
-    with db.session() as session:
+    session = db.session()
+    try:
         user = session.query(User).filter(User.telegram_id == user_id).first()
         if not user:
             logger.error(f"User with telegram_id {user_id} not found")
             return STATE_IDLE, {}
         
         return user.state, user.get_temp_data()
+    except Exception as e:
+        logger.error(f"Error getting user state: {e}")
+        return STATE_IDLE, {}
+    finally:
+        session.close()
