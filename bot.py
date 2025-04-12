@@ -292,13 +292,12 @@ def save_friend_birthday(message, user_data):
 def handle_delete_friend_callback(call):
     """Handle friend deletion callbacks."""
     user_id = call.from_user.id
-    user_data = get_user(user_id)
     
     # Extract the friend name from callback data
     friend_name = call.data[len(DELETE_FRIEND):]
     
-    if friend_name in user_data.friends:
-        del user_data.friends[friend_name]
+    # Try to remove the friend from the database
+    if remove_friend(user_id, friend_name):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -318,18 +317,21 @@ def handle_preference_callback(call):
     """Handle preference setting callbacks."""
     user_id = call.from_user.id
     user_data = get_user(user_id)
-    pref = user_data.notification_pref
+    pref = get_notification_preferences(user_id)
     
     if call.data == PREF_WEEK_BEFORE:
-        pref.week_before = not pref.week_before
+        # Toggle the week_before preference
+        update_notification_preferences(user_id, week_before=not pref.week_before)
         update_notification_keyboard(call, user_data)
         
     elif call.data == PREF_DAY_BEFORE:
-        pref.day_before = not pref.day_before
+        # Toggle the day_before preference
+        update_notification_preferences(user_id, day_before=not pref.day_before)
         update_notification_keyboard(call, user_data)
         
     elif call.data == PREF_ON_DAY:
-        pref.on_day = not pref.on_day
+        # Toggle the on_day preference
+        update_notification_preferences(user_id, on_day=not pref.on_day)
         update_notification_keyboard(call, user_data)
         
     elif call.data == PREF_DONE:
@@ -343,7 +345,8 @@ def handle_preference_callback(call):
 
 def update_notification_keyboard(call, user_data):
     """Update the notification preferences keyboard."""
-    pref = user_data.notification_pref
+    # Get current preferences from database
+    pref = get_notification_preferences(user_data.user_id)
     
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(
@@ -387,11 +390,13 @@ def handle_custom_days(call):
 
 def show_custom_days(call, user_data):
     """Show the custom days interface."""
-    pref = user_data.notification_pref
+    # Get notification preferences from database
+    pref = get_notification_preferences(user_data.user_id)
     
     # Display current custom days
-    custom_days_text = "No custom days set" if not pref.custom_days else \
-                       ", ".join(str(day) for day in sorted(pref.custom_days))
+    custom_days = pref.get_custom_days()
+    custom_days_text = "No custom days set" if not custom_days else \
+                       ", ".join(str(day) for day in sorted(custom_days))
     
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton(
@@ -400,7 +405,7 @@ def show_custom_days(call, user_data):
     ))
     
     # Add remove buttons if there are custom days
-    if pref.custom_days:
+    if custom_days:
         keyboard.add(types.InlineKeyboardButton(
             text="Remove custom day",
             callback_data=REMOVE_CUSTOM_DAY
@@ -449,16 +454,16 @@ def save_custom_day(message, user_data):
             )
             return
         
-        # Add the custom day
-        user_data.notification_pref.custom_days.add(day)
+        # Add the custom day to the database
+        custom_days = add_custom_notification_day(user_data.user_id, day)
         
         # Show confirmation
-        custom_days = ", ".join(str(d) for d in sorted(user_data.notification_pref.custom_days))
+        custom_days_str = ", ".join(str(d) for d in sorted(custom_days))
         
         bot.reply_to(
             message,
             f"Custom notification added for {day} days before.\n\n"
-            f"Your custom notification days: {custom_days}\n\n"
+            f"Your custom notification days: {custom_days_str}\n\n"
             "Use /notifications to continue setting your preferences."
         )
         
@@ -491,6 +496,13 @@ def save_custom_day(message, user_data):
         user_data.state = STATE_IDLE
         user_data.temp_data = {}
         
+        # Save user state to database
+        session = get_db_session()
+        try:
+            user_data.save(session)
+        finally:
+            session.close()
+        
     except ValueError:
         bot.reply_to(
             message,
@@ -503,10 +515,14 @@ def handle_remove_custom_day(call):
     user_id = call.from_user.id
     user_data = get_user(user_id)
     
+    # Get notification preferences from database
+    pref = get_notification_preferences(user_id)
+    custom_days = pref.get_custom_days()
+    
     # Show list of days to remove
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     
-    for day in sorted(user_data.notification_pref.custom_days):
+    for day in sorted(custom_days):
         keyboard.add(types.InlineKeyboardButton(
             text=f"{day} days before",
             callback_data=f"remove_day_{day}"
@@ -532,9 +548,9 @@ def handle_remove_specific_day(call):
     user_id = call.from_user.id
     user_data = get_user(user_id)
     
-    # Remove the selected day
+    # Remove the selected day from the database
     day = int(call.data.split("_")[-1])
-    user_data.notification_pref.custom_days.discard(day)
+    remove_custom_notification_day(user_id, day)
     
     show_custom_days(call, user_data)
     bot.answer_callback_query(call.id)

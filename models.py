@@ -312,5 +312,9 @@ def get_upcoming_birthdays(days_ahead: int = 7) -> Dict[int, List[Tuple[Friend, 
     finally:
         session.close()
 
-# Create tables
-Base.metadata.create_all(engine)
+# Create tables if they don't exist
+from sqlalchemy import inspect
+inspector = inspect(engine)
+if not inspector.has_table("users"):
+    # Only create tables if they don't exist
+    Base.metadata.create_all(engine)
