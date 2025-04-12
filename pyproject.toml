@@ -8,12 +8,10 @@ dependencies = [
     "flask>=3.1.0",
     "flask-sqlalchemy>=3.1.1",
     "gunicorn>=23.0.0",
-    "psutil>=7.0.0",
     "psycopg2-binary>=2.9.10",
     "pytelegrambotapi>=4.26.0",
     "python-telegram-bot>=22.0",
     "scheduler>=0.8.8",
-    "sqlalchemy>=2.0.40",
     "telegram>=0.0.1",
     "tlgbotfwk>=0.4.61",
 ]
