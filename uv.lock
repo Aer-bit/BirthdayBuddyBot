@@ -455,6 +455,7 @@ dependencies = [
     { name = "pytelegrambotapi" },
     { name = "python-telegram-bot" },
     { name = "scheduler" },
+    { name = "sqlalchemy" },
     { name = "telegram" },
     { name = "tlgbotfwk" },
 ]
@@ -469,6 +470,7 @@ requires-dist = [
     { name = "pytelegrambotapi", specifier = ">=4.26.0" },
     { name = "python-telegram-bot", specifier = ">=22.0" },
     { name = "scheduler", specifier = ">=0.8.8" },
+    { name = "sqlalchemy", specifier = ">=2.0.40" },
     { name = "telegram", specifier = ">=0.0.1" },
     { name = "tlgbotfwk", specifier = ">=0.4.61" },
 ]

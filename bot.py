@@ -1,28 +1,46 @@
 import os
 import re
 import logging
+import sys
 from datetime import datetime
 from typing import Optional, Dict, Tuple
 
-import telebot
-from telebot import TeleBot, apihelper
-from telebot import types
-
-from models import (
-    get_user, 
-    get_user_friends, 
-    save_friend, 
-    delete_friend, 
-    update_user_state, 
-    get_user_state,
-    STATE_IDLE,
-    STATE_ADDING_FRIEND_NAME,
-    STATE_ADDING_FRIEND_BIRTHDAY
-)
-
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('telegram_bot.log')
+    ]
+)
 logger = logging.getLogger(__name__)
+
+try:
+    import telebot
+    from telebot import TeleBot, apihelper
+    from telebot import types
+    logger.info("Successfully imported telebot modules")
+except Exception as e:
+    logger.error(f"Error importing telebot modules: {e}")
+    raise
+
+try:
+    from models import (
+        get_user, 
+        get_user_friends, 
+        save_friend, 
+        delete_friend, 
+        update_user_state, 
+        get_user_state,
+        STATE_IDLE,
+        STATE_ADDING_FRIEND_NAME,
+        STATE_ADDING_FRIEND_BIRTHDAY
+    )
+    logger.info("Successfully imported models")
+except Exception as e:
+    logger.error(f"Error importing models: {e}")
+    raise
 
 # Bot token
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -45,7 +63,14 @@ def start(message):
     first_name = message.from_user.first_name
     
     # Create or get user in the database
-    get_user(user_id, username)
+    # We'll use the app context here
+    try:
+        from app import app
+        with app.app_context():
+            get_user(user_id, username)
+            logger.debug(f"Created or retrieved user: {user_id}, {username}")
+    except Exception as e:
+        logger.error(f"Error creating user in database: {e}")
     
     bot.reply_to(
         message,
@@ -289,15 +314,42 @@ def setup_bot():
     """Initialize and start the bot."""
     if not bot:
         logger.error("Telegram bot not initialized. TELEGRAM_TOKEN may be missing.")
+        logger.error(f"TELEGRAM_TOKEN value: {TELEGRAM_TOKEN}")
+        logger.error("Please make sure you have set the TELEGRAM_TOKEN environment variable.")
         return
     
     # Note: We'll be in an app context when this is called from main.py
+    logger.info(f"Setting up bot with token: {TELEGRAM_TOKEN[:4]}...{TELEGRAM_TOKEN[-4:]}")
     
-    # Register error handler for better debugging
-    def handle_errors(exception_instance):
-        logger.error(f"Telegram bot error: {exception_instance}")
-    
-    bot.register_middleware_handler(handle_errors, update_types=['update'])
-    
-    logger.info("Starting Telegram bot...")
-    bot.infinity_polling()
+    try:
+        # Setup webhook mode or polling
+        logger.info("Bot is being set up in polling mode")
+        
+        # Register error handler for better debugging
+        def handle_errors(update_json, exception_instance):
+            logger.error(f"Telegram bot error with update {update_json}: {exception_instance}")
+        
+        # Improved debugging - check the bot's getMe() method to verify token
+        try:
+            bot_info = bot.get_me()
+            logger.info(f"Bot connected successfully! Bot username: @{bot_info.username}")
+        except Exception as e:
+            logger.error(f"Failed to get bot info: {e}")
+            return
+        
+        # Enable middleware with specific handler
+        apihelper.ENABLE_MIDDLEWARE = True
+        bot.middleware_handler(handle_errors)
+        
+        # Add a custom update handler to verify processing
+        @bot.message_handler(func=lambda message: True, content_types=['text'])
+        def echo_message(message):
+            logger.debug(f"Received message: {message.text}")
+            if message.text == '/ping':
+                bot.reply_to(message, 'Pong! The bot is working correctly.')
+        
+        logger.info("Starting Telegram bot with infinity polling...")
+        bot.infinity_polling(timeout=20, long_polling_timeout=20)
+    except Exception as e:
+        logger.error(f"Failed to start the bot: {e}")
+        raise

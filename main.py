@@ -2,13 +2,20 @@ import os
 import logging
 import threading
 import time
+import sys
 from app import app
 from bot import setup_bot
 from scheduler import start_scheduler
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('main.log')
+    ]
+)
 logger = logging.getLogger(__name__)
 
 def run_flask_app():
@@ -22,26 +29,50 @@ def run_flask_app():
         if "Address already in use" in str(e):
             logger.info("Port 5000 is already in use, continuing with bot functionality")
         else:
-            raise
+            logger.error(f"Unexpected Flask error: {e}")
 
 def run_bot():
     """Run the Telegram bot."""
-    # Create a fresh app context for the bot
-    with app.app_context():
-        setup_bot()
+    try:
+        # Create a fresh app context for the bot
+        with app.app_context():
+            logger.info("Starting bot within app context")
+            setup_bot()
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        raise
 
 def run_scheduler():
     """Run the scheduler."""
-    # Scheduler now handles its own app context
-    start_scheduler()
+    try:
+        # Scheduler now handles its own app context
+        logger.info("Starting scheduler")
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"Scheduler error: {e}")
+
+def check_token():
+    """Check for TELEGRAM_TOKEN and validate it"""
+    token = os.environ.get("TELEGRAM_TOKEN")
+    if not token:
+        logger.error("TELEGRAM_TOKEN environment variable is not set!")
+        logger.error("The bot will not work without a valid Telegram token.")
+        return None
+    
+    if len(token) < 20:  # Simple check for token format
+        logger.error(f"TELEGRAM_TOKEN appears to be invalid (too short): {token}")
+        return None
+    
+    logger.info(f"Found Telegram token: {token[:4]}...{token[-4:]}")
+    return token
 
 if __name__ == "__main__":
     logger.info("Starting Telegram Birthday Bot")
     
-    # Check if we have a Telegram token
-    if not os.environ.get("TELEGRAM_TOKEN"):
-        logger.error("TELEGRAM_TOKEN environment variable is not set. The bot will not work properly.")
-        logger.info("Set the TELEGRAM_TOKEN environment variable with your Telegram Bot API token")
+    # Check environment variables
+    if not check_token():
+        logger.error("Cannot start bot without a valid TELEGRAM_TOKEN.")
+        logger.info("Set the TELEGRAM_TOKEN environment variable with your Telegram Bot API token.")
         logger.info("Running only the Flask app...")
         # Run only the Flask app if no token is available
         app.run(host="0.0.0.0", port=5000, debug=True)
@@ -57,13 +88,22 @@ if __name__ == "__main__":
             logger.error(f"Could not start Flask app: {e}")
         
         # Start the scheduler for birthday notifications in its own thread
-        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-        scheduler_thread.start()
-        logger.info("Birthday notification scheduler started in its own thread")
+        try:
+            scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+            scheduler_thread.start()
+            logger.info("Birthday notification scheduler started in its own thread")
+        except Exception as e:
+            logger.error(f"Could not start scheduler: {e}")
         
         # Give the other threads a moment to start
         time.sleep(1)
         
         # Start the bot in the main thread
         logger.info("Starting Telegram bot in main thread")
-        run_bot()
+        try:
+            run_bot()
+        except KeyboardInterrupt:
+            logger.info("Bot stopped by user")
+        except Exception as e:
+            logger.error(f"Bot crashed: {e}")
+            raise
