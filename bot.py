@@ -109,14 +109,22 @@ def register_handlers(bot_instance):
         """Start the add friend conversation."""
         user_id = message.from_user.id
         username = message.from_user.username
+        logger.debug(f"Starting add friend command for user {user_id}")
+        
         user_data = get_user(user_id, username)
         user_data.state = STATE_ADDING_FRIEND_NAME
+        
+        # Initialize empty temp_data to avoid serialization issues
         user_data.temp_data = {}
+        logger.debug(f"Set user state to {user_data.state}")
         
         # Save the user state to the database
         session = get_db_session()
         try:
             user_data.save(session)
+            logger.debug(f"Successfully saved initial state for add friend command")
+        except Exception as e:
+            logger.error(f"Error saving state: {e}")
         finally:
             session.close()
         
@@ -432,6 +440,7 @@ def register_handlers(bot_instance):
 def save_friend_name(message, user_data, bot_instance):
     """Save the friend's name and ask for birthday."""
     friend_name = message.text.strip()
+    logger.debug(f"Processing friend name: '{friend_name}'")
     
     # Check if name is valid
     if not friend_name or len(friend_name) > 100:
@@ -441,13 +450,23 @@ def save_friend_name(message, user_data, bot_instance):
         )
         return
     
+    # Ensure temp_data is a dictionary
+    if user_data.temp_data is None:
+        user_data.temp_data = {}
+        
     user_data.temp_data["friend_name"] = friend_name
     user_data.state = STATE_ADDING_FRIEND_BIRTHDAY
+    
+    logger.debug(f"Saved friend name '{friend_name}' to temp_data")
+    logger.debug(f"Updated state to {STATE_ADDING_FRIEND_BIRTHDAY}")
     
     # Save the user state to the database
     session = get_db_session()
     try:
         user_data.save(session)
+        logger.debug(f"Successfully saved user state with friend name")
+    except Exception as e:
+        logger.error(f"Error saving state with friend name: {e}")
     finally:
         session.close()
     
@@ -460,9 +479,27 @@ def save_friend_name(message, user_data, bot_instance):
 def save_friend_birthday(message, user_data, bot_instance):
     """Save the friend's birthday."""
     birthday_text = message.text.strip()
+    logger.debug(f"Processing birthday text: '{birthday_text}'")
     
     # Parse the birthday
     try:
+        # Check if temp_data exists and contains friend_name
+        if not user_data.temp_data or "friend_name" not in user_data.temp_data:
+            logger.error(f"temp_data missing or doesn't contain friend_name: {user_data.temp_data}")
+            bot_instance.reply_to(
+                message,
+                "Sorry, I couldn't find your friend's name. Let's start over with /add."
+            )
+            # Reset state
+            user_data.state = STATE_IDLE
+            user_data.temp_data = {}
+            session = get_db_session()
+            try:
+                user_data.save(session)
+            finally:
+                session.close()
+            return
+        
         # Check if the format is correct
         if not re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', birthday_text):
             raise ValueError("Format doesn't match DD/MM/YYYY")
@@ -471,9 +508,11 @@ def save_friend_birthday(message, user_data, bot_instance):
         birth_date = datetime(year, month, day)
         
         friend_name = user_data.temp_data["friend_name"]
+        logger.debug(f"Retrieved friend name from temp_data: '{friend_name}'")
         
         # Save the friend to the database
         friend = add_friend(user_data.user_id, friend_name, birth_date)
+        logger.debug(f"Successfully added/updated friend in database")
         
         days_until = friend.days_until_birthday()
         next_birthday = friend.next_birthday()
@@ -487,11 +526,15 @@ def save_friend_birthday(message, user_data, bot_instance):
         # Reset state
         user_data.state = STATE_IDLE
         user_data.temp_data = {}
+        logger.debug(f"Reset user state to {STATE_IDLE}")
         
         # Save user state to database
         session = get_db_session()
         try:
             user_data.save(session)
+            logger.debug(f"Successfully saved user state after adding friend")
+        except Exception as e:
+            logger.error(f"Error saving state after adding friend: {e}")
         finally:
             session.close()
         
@@ -505,10 +548,14 @@ def save_friend_birthday(message, user_data, bot_instance):
 
 def save_custom_day(message, user_data, bot_instance):
     """Save the custom notification day."""
+    logger.debug(f"Processing custom day text: '{message.text}'")
+    
     try:
         day = int(message.text.strip())
+        logger.debug(f"Parsed custom day as integer: {day}")
         
         if not check_valid_days_range(day):
+            logger.debug(f"Day {day} is not in valid range")
             bot_instance.reply_to(
                 message,
                 "Please enter a positive number of days between 1 and 365."
@@ -517,6 +564,7 @@ def save_custom_day(message, user_data, bot_instance):
         
         # Add the custom day to the database
         custom_days = add_custom_notification_day(user_data.user_id, day)
+        logger.debug(f"Successfully added custom day {day}, all custom days: {custom_days}")
         
         # Show confirmation
         custom_days_str = ", ".join(str(d) for d in sorted(custom_days))
@@ -531,15 +579,20 @@ def save_custom_day(message, user_data, bot_instance):
         # Reset state
         user_data.state = STATE_IDLE
         user_data.temp_data = {}
+        logger.debug(f"Reset user state to {STATE_IDLE}")
         
         # Save user state to database
         session = get_db_session()
         try:
             user_data.save(session)
+            logger.debug(f"Successfully saved user state after adding custom day")
+        except Exception as e:
+            logger.error(f"Error saving state after adding custom day: {e}")
         finally:
             session.close()
         
-    except ValueError:
+    except ValueError as e:
+        logger.error(f"Error parsing custom day: {e}")
         bot_instance.reply_to(
             message,
             "Please enter a valid number of days."
