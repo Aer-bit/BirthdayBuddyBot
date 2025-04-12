@@ -1,5 +1,6 @@
 import logging
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 STATE_IDLE = "IDLE"
 STATE_ADDING_FRIEND_NAME = "ADDING_FRIEND_NAME"
 STATE_ADDING_FRIEND_BIRTHDAY = "ADDING_FRIEND_BIRTHDAY"
+STATE_SETTING_NOTIFICATION_TIME = "SETTING_NOTIFICATION_TIME"
 
 class User(db.Model):
     """User model representing a Telegram user"""
@@ -25,6 +27,10 @@ class User(db.Model):
     username = db.Column(db.String(255), nullable=True)
     state = db.Column(db.String(50), default=STATE_IDLE)
     temp_data = db.Column(db.Text, default="{}")
+    # Notification time in 24-hour format HH:MM, default 9:00 AM
+    notification_time = db.Column(db.String(5), default="09:00")
+    # Whether notifications are enabled
+    notifications_enabled = db.Column(db.Boolean, default=True)
     
     # Relationships
     friends = relationship("Friend", back_populates="user", cascade="all, delete-orphan")
@@ -39,6 +45,15 @@ class User(db.Model):
             return json.loads(self.temp_data) if self.temp_data else {}
         except:
             return {}
+            
+    def get_notification_hour_minute(self) -> Tuple[int, int]:
+        """Extract hour and minute from notification_time string"""
+        try:
+            hour, minute = self.notification_time.split(":")
+            return int(hour), int(minute)
+        except (ValueError, AttributeError):
+            # Return default time (9:00 AM) if there's an error
+            return 9, 0
 
 
 class Friend(db.Model):
@@ -110,8 +125,7 @@ def get_all_users() -> List[User]:
         session.close()
 
 
-# Create app context wrapper functions
-
+# Create app context wrapper function
 def with_app_context(func):
     """Decorator to run a function within the app context."""
     def wrapper(*args, **kwargs):
@@ -270,3 +284,86 @@ def get_user_state(user_id: int) -> Tuple[str, Dict]:
         return STATE_IDLE, {}
     finally:
         session.close()
+
+
+def update_notification_time(user_id: int, time_str: str) -> bool:
+    """
+    Update a user's notification time
+    time_str should be in format "HH:MM" (24-hour format)
+    """
+    session = db.session()
+    try:
+        # Validate time format
+        if not re.match(r"^([01]?[0-9]|2[0-3]):([0-5][0-9])$", time_str):
+            logger.error(f"Invalid time format: {time_str}")
+            return False
+        
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            logger.error(f"User with telegram_id {user_id} not found")
+            return False
+        
+        user.notification_time = time_str
+        session.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error updating notification time: {e}")
+        session.rollback()
+        return False
+    finally:
+        session.close()
+
+
+def toggle_notifications(user_id: int, enabled: bool) -> bool:
+    """Enable or disable notifications for a user"""
+    session = db.session()
+    try:
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            logger.error(f"User with telegram_id {user_id} not found")
+            return False
+        
+        user.notifications_enabled = enabled
+        session.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error toggling notifications: {e}")
+        session.rollback()
+        return False
+    finally:
+        session.close()
+
+
+def get_user_settings(user_id: int) -> Optional[Dict]:
+    """Get a user's notification settings"""
+    session = db.session()
+    try:
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            logger.error(f"User with telegram_id {user_id} not found")
+            return None
+        
+        return {
+            "notification_time": user.notification_time,
+            "notifications_enabled": user.notifications_enabled
+        }
+    except Exception as e:
+        logger.error(f"Error getting user settings: {e}")
+        return None
+    finally:
+        session.close()
+
+
+# Create context-wrapped versions of all database functions
+# These should be at the end of the file, after all function definitions
+get_user_with_context = with_app_context(get_user)
+get_all_users_with_context = with_app_context(get_all_users)
+get_upcoming_birthdays_with_context = with_app_context(get_upcoming_birthdays)
+save_friend_with_context = with_app_context(save_friend)
+delete_friend_with_context = with_app_context(delete_friend)
+get_user_friends_with_context = with_app_context(get_user_friends)
+update_user_state_with_context = with_app_context(update_user_state)
+get_user_state_with_context = with_app_context(get_user_state)
+update_notification_time_with_context = with_app_context(update_notification_time)
+toggle_notifications_with_context = with_app_context(toggle_notifications)
+get_user_settings_with_context = with_app_context(get_user_settings)

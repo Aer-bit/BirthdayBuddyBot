@@ -27,39 +27,24 @@ except Exception as e:
 
 try:
     from models import (
-        get_user, 
-        get_user_friends, 
-        save_friend, 
-        delete_friend, 
-        update_user_state, 
-        get_user_state,
+        get_user_with_context, 
+        get_user_friends_with_context, 
+        save_friend_with_context, 
+        delete_friend_with_context, 
+        update_user_state_with_context, 
+        get_user_state_with_context,
+        update_notification_time_with_context,
+        toggle_notifications_with_context,
+        get_user_settings_with_context,
         STATE_IDLE,
         STATE_ADDING_FRIEND_NAME,
-        STATE_ADDING_FRIEND_BIRTHDAY
+        STATE_ADDING_FRIEND_BIRTHDAY,
+        STATE_SETTING_NOTIFICATION_TIME
     )
     # Import Flask app for context
     from app import app as flask_app
     
-    # Create a helper function to run database operations with app context
-    def with_app_context(func):
-        """Run a database function within the app context."""
-        def wrapper(*args, **kwargs):
-            try:
-                with flask_app.app_context():
-                    logger.debug(f"Running {func.__name__} within app context")
-                    return func(*args, **kwargs)
-            except Exception as e:
-                logger.error(f"Error in {func.__name__}: {e}")
-                return None
-        return wrapper
-    
-    # Apply app context to all database functions
-    get_user_with_context = with_app_context(get_user)
-    get_user_friends_with_context = with_app_context(get_user_friends)
-    save_friend_with_context = with_app_context(save_friend)
-    delete_friend_with_context = with_app_context(delete_friend)
-    update_user_state_with_context = with_app_context(update_user_state)
-    get_user_state_with_context = with_app_context(get_user_state)
+    # We're now using context-wrapped functions imported directly from models
     
     logger.info("Successfully imported models and set up context wrappers")
 except Exception as e:
@@ -110,6 +95,7 @@ def help_command(message):
         "/add - Add a friend's birthday\n"
         "/list - List all your friends' birthdays\n"
         "/remove - Remove a friend from your list\n"
+        "/settings - Set notification preferences\n"
         "/help - Show this help message\n"
         "/cancel - Cancel the current operation"
     )
@@ -178,6 +164,89 @@ def remove_friend(message):
         reply_markup=keyboard
     )
 
+@bot.message_handler(commands=['settings'])
+def settings(message):
+    """Show and modify user notification settings."""
+    user_id = message.from_user.id
+    settings = get_user_settings_with_context(user_id)
+    
+    if not settings:
+        bot.reply_to(message, "Error retrieving your settings. Please try again later.")
+        return
+    
+    # Create keyboard with settings options
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    
+    # Button to change notification time
+    keyboard.add(types.InlineKeyboardButton(
+        f"Change notification time (current: {settings['notification_time']})",
+        callback_data="change_time"
+    ))
+    
+    # Button to toggle notifications
+    toggle_text = "Disable notifications" if settings['notifications_enabled'] else "Enable notifications"
+    keyboard.add(types.InlineKeyboardButton(
+        toggle_text,
+        callback_data="toggle_notifications"
+    ))
+    
+    bot.send_message(
+        message.chat.id,
+        "Your notification settings:",
+        reply_markup=keyboard
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "change_time")
+def change_notification_time_callback(call):
+    """Handle the change notification time callback."""
+    user_id = call.from_user.id
+    
+    # Update user state to indicate we're waiting for a new notification time
+    update_user_state_with_context(user_id, STATE_SETTING_NOTIFICATION_TIME, {})
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="Please enter your preferred notification time in 24-hour format (HH:MM).\nFor example: 09:00 for 9 AM or 18:30 for 6:30 PM."
+    )
+    
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "toggle_notifications")
+def toggle_notifications_callback(call):
+    """Handle the toggle notifications callback."""
+    user_id = call.from_user.id
+    settings = get_user_settings_with_context(user_id)
+    
+    if not settings:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Error retrieving your settings. Please try again later."
+        )
+        bot.answer_callback_query(call.id)
+        return
+    
+    # Toggle the current setting
+    new_state = not settings['notifications_enabled']
+    success = toggle_notifications_with_context(user_id, new_state)
+    
+    if success:
+        state_text = "enabled" if new_state else "disabled"
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"Notifications have been {state_text}."
+        )
+    else:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Error updating your settings. Please try again later."
+        )
+    
+    bot.answer_callback_query(call.id)
+
 @bot.message_handler(commands=['cancel'])
 def cancel(message):
     """Cancel the current operation."""
@@ -203,6 +272,8 @@ def handle_text(message):
         save_friend_name(message, user_id, temp_data)
     elif state == STATE_ADDING_FRIEND_BIRTHDAY:
         save_friend_birthday(message, user_id, temp_data)
+    elif state == STATE_SETTING_NOTIFICATION_TIME:
+        save_notification_time(message, user_id)
     else:
         bot.reply_to(
             message,
@@ -231,6 +302,36 @@ def save_friend_name(message, user_id, temp_data):
         f"When is {friend_name}'s birthday? Please enter the date in DD/MM/YYYY format.\n"
         "For example: 15/06/1990"
     )
+
+def save_notification_time(message, user_id):
+    """Save the user's preferred notification time."""
+    time_text = message.text.strip()
+    
+    # Check if the format is correct (HH:MM in 24-hour format)
+    if not re.match(r"^([01]?[0-9]|2[0-3]):([0-5][0-9])$", time_text):
+        bot.reply_to(
+            message,
+            "Invalid time format. Please enter the time in 24-hour format (HH:MM).\n"
+            "For example: 09:00 for 9 AM or 18:30 for 6:30 PM."
+        )
+        return
+    
+    # Update the notification time in the database
+    success = update_notification_time_with_context(user_id, time_text)
+    
+    if success:
+        bot.reply_to(
+            message,
+            f"Great! Your notification time has been updated to {time_text}."
+        )
+    else:
+        bot.reply_to(
+            message,
+            "Sorry, there was an error updating your notification time. Please try again later."
+        )
+    
+    # Reset state
+    update_user_state_with_context(user_id, STATE_IDLE, {})
 
 def save_friend_birthday(message, user_id, temp_data):
     """Save the friend's birthday."""
