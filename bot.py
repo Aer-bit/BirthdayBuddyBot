@@ -37,7 +37,31 @@ try:
         STATE_ADDING_FRIEND_NAME,
         STATE_ADDING_FRIEND_BIRTHDAY
     )
-    logger.info("Successfully imported models")
+    # Import Flask app for context
+    from app import app as flask_app
+    
+    # Create a helper function to run database operations with app context
+    def with_app_context(func):
+        """Run a database function within the app context."""
+        def wrapper(*args, **kwargs):
+            try:
+                with flask_app.app_context():
+                    logger.debug(f"Running {func.__name__} within app context")
+                    return func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Error in {func.__name__}: {e}")
+                return None
+        return wrapper
+    
+    # Apply app context to all database functions
+    get_user_with_context = with_app_context(get_user)
+    get_user_friends_with_context = with_app_context(get_user_friends)
+    save_friend_with_context = with_app_context(save_friend)
+    delete_friend_with_context = with_app_context(delete_friend)
+    update_user_state_with_context = with_app_context(update_user_state)
+    get_user_state_with_context = with_app_context(get_user_state)
+    
+    logger.info("Successfully imported models and set up context wrappers")
 except Exception as e:
     logger.error(f"Error importing models: {e}")
     raise
@@ -62,15 +86,9 @@ def start(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     
-    # Create or get user in the database
-    # We'll use the app context here
-    try:
-        from app import app
-        with app.app_context():
-            get_user(user_id, username)
-            logger.debug(f"Created or retrieved user: {user_id}, {username}")
-    except Exception as e:
-        logger.error(f"Error creating user in database: {e}")
+    # Create or get user in the database using wrapped function
+    get_user_with_context(user_id, username)
+    logger.debug(f"Created or retrieved user: {user_id}, {username}")
     
     bot.reply_to(
         message,
@@ -101,8 +119,8 @@ def add_friend(message):
     """Start the add friend conversation."""
     user_id = message.from_user.id
     
-    # Update user state in the database
-    update_user_state(user_id, STATE_ADDING_FRIEND_NAME, {})
+    # Update user state in the database using wrapped function
+    update_user_state_with_context(user_id, STATE_ADDING_FRIEND_NAME, {})
     
     bot.reply_to(
         message,
@@ -113,7 +131,7 @@ def add_friend(message):
 def list_friends(message):
     """List all friends and their birthdays."""
     user_id = message.from_user.id
-    friends = get_user_friends(user_id)
+    friends = get_user_friends_with_context(user_id)
     
     if not friends:
         bot.reply_to(
@@ -138,7 +156,7 @@ def list_friends(message):
 def remove_friend(message):
     """Send a list of friends to remove."""
     user_id = message.from_user.id
-    friends = get_user_friends(user_id)
+    friends = get_user_friends_with_context(user_id)
     
     if not friends:
         bot.reply_to(
@@ -164,13 +182,13 @@ def remove_friend(message):
 def cancel(message):
     """Cancel the current operation."""
     user_id = message.from_user.id
-    state, _ = get_user_state(user_id)
+    state, _ = get_user_state_with_context(user_id)
     
     if state == STATE_IDLE:
         bot.reply_to(message, "No active operation to cancel.")
         return
     
-    update_user_state(user_id, STATE_IDLE, {})
+    update_user_state_with_context(user_id, STATE_IDLE, {})
     
     bot.reply_to(message, "Operation cancelled.")
 
@@ -179,7 +197,7 @@ def cancel(message):
 def handle_text(message):
     """Handle text messages based on the user's current state."""
     user_id = message.from_user.id
-    state, temp_data = get_user_state(user_id)
+    state, temp_data = get_user_state_with_context(user_id)
     
     if state == STATE_ADDING_FRIEND_NAME:
         save_friend_name(message, user_id, temp_data)
@@ -206,7 +224,7 @@ def save_friend_name(message, user_id, temp_data):
     
     # Update the temp_data with the friend's name and change the state
     temp_data["friend_name"] = friend_name
-    update_user_state(user_id, STATE_ADDING_FRIEND_BIRTHDAY, temp_data)
+    update_user_state_with_context(user_id, STATE_ADDING_FRIEND_BIRTHDAY, temp_data)
     
     bot.reply_to(
         message,
