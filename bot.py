@@ -288,5 +288,13 @@ def setup_bot():
         logger.error("Telegram bot not initialized. TELEGRAM_TOKEN may be missing.")
         return
     
+    # Note: We'll be in an app context when this is called from main.py
+    
+    # Register error handler for better debugging
+    def handle_errors(exception_instance):
+        logger.error(f"Telegram bot error: {exception_instance}")
+    
+    bot.register_middleware_handler(handle_errors, update_types=['update'])
+    
     logger.info("Starting Telegram bot...")
     bot.infinity_polling()

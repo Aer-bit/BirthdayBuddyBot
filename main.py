@@ -1,6 +1,7 @@
 import os
 import logging
 import threading
+import time
 from app import app
 from bot import setup_bot
 from scheduler import start_scheduler
@@ -10,23 +11,28 @@ logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Create a Flask app context for the bot and scheduler threads
-app_context = app.app_context()
-
 def run_flask_app():
     """Run the Flask app in a separate thread."""
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    # Use gunicorn in production instead of this
+    try:
+        app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    except Exception as e:
+        logger.error(f"Flask app error: {e}")
+        # If port is in use, just log it but don't crash
+        if "Address already in use" in str(e):
+            logger.info("Port 5000 is already in use, continuing with bot functionality")
+        else:
+            raise
 
 def run_bot():
     """Run the Telegram bot."""
-    # Push the app context in this thread
-    app_context.push()
-    setup_bot()
+    # Create a fresh app context for the bot
+    with app.app_context():
+        setup_bot()
 
 def run_scheduler():
-    """Run the scheduler in the app context."""
-    # Push the app context in this thread
-    app_context.push()
+    """Run the scheduler."""
+    # Scheduler now handles its own app context
     start_scheduler()
 
 if __name__ == "__main__":
@@ -40,15 +46,23 @@ if __name__ == "__main__":
         # Run only the Flask app if no token is available
         app.run(host="0.0.0.0", port=5000, debug=True)
     else:
+        # We don't need to start a separate Flask app if we're using gunicorn
+        # But we'll still try for development purposes
+        try:
+            # Start Flask app in a separate thread
+            flask_thread = threading.Thread(target=run_flask_app, daemon=True)
+            flask_thread.start()
+            logger.info("Flask app started in background thread")
+        except Exception as e:
+            logger.error(f"Could not start Flask app: {e}")
+        
         # Start the scheduler for birthday notifications in its own thread
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
         logger.info("Birthday notification scheduler started in its own thread")
         
-        # Start Flask app in a separate thread
-        flask_thread = threading.Thread(target=run_flask_app, daemon=True)
-        flask_thread.start()
-        logger.info("Flask app started in background thread")
+        # Give the other threads a moment to start
+        time.sleep(1)
         
         # Start the bot in the main thread
         logger.info("Starting Telegram bot in main thread")
