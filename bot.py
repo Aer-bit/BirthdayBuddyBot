@@ -8,7 +8,11 @@ import telebot
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from models import Friend, NotificationPreference, get_user, UserData
+from models import (
+    Friend, NotificationPreference, get_user, UserData, get_db_session,
+    get_user_friends, add_friend, remove_friend, get_notification_preferences,
+    update_notification_preferences, add_custom_notification_day, remove_custom_notification_day
+)
 from helpers import parse_date, format_date, check_valid_days_range
 
 # Configure logging
@@ -91,9 +95,11 @@ def add_friend(message):
 def list_friends(message):
     """List all friends and their birthdays."""
     user_id = message.from_user.id
-    user_data = get_user(user_id)
     
-    if not user_data.friends:
+    # Get friends from the database
+    friends = get_user_friends(user_id)
+    
+    if not friends:
         bot.reply_to(
             message,
             "You haven't added any friends yet. Use /add to add a friend."
@@ -102,7 +108,7 @@ def list_friends(message):
     
     msg_text = "Here are your friends' birthdays:\n\n"
     
-    for friend in user_data.friends.values():
+    for friend in friends.values():
         days_until = friend.days_until_birthday()
         next_birthday = friend.next_birthday()
         birth_date = friend.birth_date
@@ -116,9 +122,11 @@ def list_friends(message):
 def remove_friend(message):
     """Send a list of friends to remove."""
     user_id = message.from_user.id
-    user_data = get_user(user_id)
     
-    if not user_data.friends:
+    # Get friends from the database
+    friends = get_user_friends(user_id)
+    
+    if not friends:
         bot.reply_to(
             message,
             "You don't have any friends to remove. Use /add to add a friend."
@@ -126,7 +134,7 @@ def remove_friend(message):
         return
     
     keyboard = types.InlineKeyboardMarkup()
-    for friend_name in user_data.friends.keys():
+    for friend_name in friends.keys():
         keyboard.add(types.InlineKeyboardButton(
             text=friend_name, 
             callback_data=f"{DELETE_FRIEND}{friend_name}"
@@ -248,11 +256,11 @@ def save_friend_birthday(message, user_data):
         
         friend_name = user_data.temp_data["friend_name"]
         
-        # Save the friend
-        user_data.friends[friend_name] = Friend(name=friend_name, birth_date=birth_date)
+        # Save the friend to the database
+        friend = add_friend(user_data.user_id, friend_name, birth_date)
         
-        days_until = user_data.friends[friend_name].days_until_birthday()
-        next_birthday = user_data.friends[friend_name].next_birthday()
+        days_until = friend.days_until_birthday()
+        next_birthday = friend.next_birthday()
         
         bot.reply_to(
             message,
@@ -263,6 +271,13 @@ def save_friend_birthday(message, user_data):
         # Reset state
         user_data.state = STATE_IDLE
         user_data.temp_data = {}
+        
+        # Save user state to database
+        session = get_db_session()
+        try:
+            user_data.save(session)
+        finally:
+            session.close()
         
     except (ValueError, IndexError) as e:
         logger.error(f"Error parsing birthday: {e}")
