@@ -69,3 +69,27 @@ def webhook():
     update = request.get_json()
     logger.debug(f"Received webhook update: {update}")
     return jsonify({"status": "success"})
+
+@app.route('/status')
+def status():
+    """Display application status and user statistics"""
+    with app.app_context():
+        from models import User, Friend
+        user_count = User.query.count()
+        friend_count = Friend.query.count()
+        
+        # Get notification settings summary
+        notification_settings = []
+        for user in User.query.all():
+            notification_settings.append({
+                "telegram_id": user.telegram_id,
+                "notification_time": user.notification_time,
+                "notifications_enabled": user.notifications_enabled
+            })
+        
+        return jsonify({
+            "status": "Bot is running",
+            "user_count": user_count,
+            "friend_count": friend_count,
+            "notification_settings": notification_settings
+        })

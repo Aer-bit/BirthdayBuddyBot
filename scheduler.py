@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timedelta
 
 from app import app
-from models import get_upcoming_birthdays
+from models import get_upcoming_birthdays_with_context, get_all_users_with_context
 from bot import send_birthday_notification
 
 # Configure logging
@@ -13,22 +13,50 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # How often to check for birthdays (in seconds)
-CHECK_INTERVAL = 60 * 60  # Check every hour
+CHECK_INTERVAL = 60 * 5  # Check every 5 minutes to respect user notification times
 
 def check_birthdays(app_context) -> None:
-    """Check for upcoming birthdays and send notifications."""
-    logger.debug("Checking for upcoming birthdays...")
+    """Check for upcoming birthdays and send notifications based on user preferences."""
+    current_time = datetime.now()
+    current_hour = current_time.hour
+    current_minute = current_time.minute
+    
+    logger.debug(f"Checking for birthdays at {current_time.strftime('%H:%M')}...")
     
     # Ensure we're in an application context
     with app_context:
-        # Get birthdays that happen today (days_ahead=0)
-        today_birthdays = get_upcoming_birthdays(days_ahead=0)
+        # Get all users to check their notification preferences
+        all_users = get_all_users_with_context()
         
-        for user_id, birthdays in today_birthdays.items():
-            for friend, days_until in birthdays:
-                logger.debug(f"Sending notification to user {user_id} about {friend.name}'s birthday today")
-                # Send the notification directly (telebot is synchronous)
-                send_birthday_notification(user_id, friend, days_until)
+        # For each user with notifications enabled, check if it's their preferred notification time
+        for user in all_users:
+            # Skip users who have disabled notifications
+            if not user.notifications_enabled:
+                logger.debug(f"Skipping user {user.telegram_id} - notifications disabled")
+                continue
+            
+            # Get the user's preferred notification hour and minute
+            pref_hour, pref_minute = user.get_notification_hour_minute()
+            
+            # Check if it's time to send notifications for this user
+            # Allow for some delay (within 5 minutes of preferred time)
+            time_diff_minutes = abs((current_hour * 60 + current_minute) - (pref_hour * 60 + pref_minute))
+            
+            if time_diff_minutes <= 5:  # Within 5 minutes of user's preferred time
+                logger.debug(f"Checking birthdays for user {user.telegram_id} (preferred time: {user.notification_time})")
+                
+                # Get birthdays that happen today (days_ahead=0) for all users
+                # We filter for this specific user below
+                today_birthdays = get_upcoming_birthdays_with_context(days_ahead=0)
+                
+                # Check if this user has any birthday notifications
+                if user.telegram_id in today_birthdays:
+                    for friend, days_until in today_birthdays[user.telegram_id]:
+                        logger.debug(f"Sending notification to user {user.telegram_id} about {friend.name}'s birthday today")
+                        # Send the notification directly (telebot is synchronous)
+                        send_birthday_notification(user.telegram_id, friend, days_until)
+            else:
+                logger.debug(f"Not notification time for user {user.telegram_id} - current: {current_hour}:{current_minute}, preferred: {pref_hour}:{pref_minute}")
     
     logger.debug("Birthday check complete")
 
