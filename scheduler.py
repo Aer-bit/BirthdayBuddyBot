@@ -18,12 +18,12 @@ def check_birthdays() -> None:
     """Check for upcoming birthdays and send notifications."""
     logger.debug("Checking for upcoming birthdays...")
     
-    # Get birthdays that should trigger notifications in the next week
-    upcoming_birthdays = get_upcoming_birthdays(days_ahead=7)
+    # Get birthdays that happen today (days_ahead=0)
+    today_birthdays = get_upcoming_birthdays(days_ahead=0)
     
-    for user_id, birthdays in upcoming_birthdays.items():
+    for user_id, birthdays in today_birthdays.items():
         for friend, days_until in birthdays:
-            logger.debug(f"Sending notification to user {user_id} about {friend.name}'s birthday in {days_until} days")
+            logger.debug(f"Sending notification to user {user_id} about {friend.name}'s birthday today")
             # Send the notification directly (telebot is synchronous)
             send_birthday_notification(user_id, friend, days_until)
     

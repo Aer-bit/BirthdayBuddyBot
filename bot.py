@@ -2,13 +2,23 @@ import os
 import re
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Tuple
 
 import telebot
 from telebot import TeleBot
 from telebot import types
 
-from models import Friend, get_user
+from models import (
+    get_user, 
+    get_user_friends, 
+    save_friend, 
+    delete_friend, 
+    update_user_state, 
+    get_user_state,
+    STATE_IDLE,
+    STATE_ADDING_FRIEND_NAME,
+    STATE_ADDING_FRIEND_BIRTHDAY
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,11 +26,6 @@ logger = logging.getLogger(__name__)
 
 # Bot token
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-
-# User state constants
-STATE_IDLE = "IDLE"
-STATE_ADDING_FRIEND_NAME = "ADDING_FRIEND_NAME"
-STATE_ADDING_FRIEND_BIRTHDAY = "ADDING_FRIEND_BIRTHDAY"
 
 # Callback query data identifiers
 DELETE_FRIEND = "delete_friend_"
@@ -36,7 +41,8 @@ def start(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     
-    user_data = get_user(user_id, username)
+    # Create or get user in the database
+    get_user(user_id, username)
     
     bot.reply_to(
         message,
@@ -66,9 +72,9 @@ def help_command(message):
 def add_friend(message):
     """Start the add friend conversation."""
     user_id = message.from_user.id
-    user_data = get_user(user_id)
-    user_data.state = STATE_ADDING_FRIEND_NAME
-    user_data.temp_data = {}
+    
+    # Update user state in the database
+    update_user_state(user_id, STATE_ADDING_FRIEND_NAME, {})
     
     bot.reply_to(
         message,
@@ -79,9 +85,9 @@ def add_friend(message):
 def list_friends(message):
     """List all friends and their birthdays."""
     user_id = message.from_user.id
-    user_data = get_user(user_id)
+    friends = get_user_friends(user_id)
     
-    if not user_data.friends:
+    if not friends:
         bot.reply_to(
             message,
             "You haven't added any friends yet. Use /add to add a friend."
@@ -90,7 +96,7 @@ def list_friends(message):
     
     msg_text = "Here are your friends' birthdays:\n\n"
     
-    for friend in user_data.friends.values():
+    for friend in friends:
         days_until = friend.days_until_birthday()
         next_birthday = friend.next_birthday()
         birth_date = friend.birth_date
@@ -104,9 +110,9 @@ def list_friends(message):
 def remove_friend(message):
     """Send a list of friends to remove."""
     user_id = message.from_user.id
-    user_data = get_user(user_id)
+    friends = get_user_friends(user_id)
     
-    if not user_data.friends:
+    if not friends:
         bot.reply_to(
             message,
             "You don't have any friends to remove. Use /add to add a friend."
@@ -114,10 +120,10 @@ def remove_friend(message):
         return
     
     keyboard = types.InlineKeyboardMarkup()
-    for friend_name in user_data.friends.keys():
+    for friend in friends:
         keyboard.add(types.InlineKeyboardButton(
-            text=friend_name, 
-            callback_data=f"{DELETE_FRIEND}{friend_name}"
+            text=friend.name, 
+            callback_data=f"{DELETE_FRIEND}{friend.name}"
         ))
     
     bot.send_message(
@@ -130,14 +136,13 @@ def remove_friend(message):
 def cancel(message):
     """Cancel the current operation."""
     user_id = message.from_user.id
-    user_data = get_user(user_id)
+    state, _ = get_user_state(user_id)
     
-    if user_data.state == STATE_IDLE:
+    if state == STATE_IDLE:
         bot.reply_to(message, "No active operation to cancel.")
         return
     
-    user_data.state = STATE_IDLE
-    user_data.temp_data = {}
+    update_user_state(user_id, STATE_IDLE, {})
     
     bot.reply_to(message, "Operation cancelled.")
 
@@ -146,12 +151,12 @@ def cancel(message):
 def handle_text(message):
     """Handle text messages based on the user's current state."""
     user_id = message.from_user.id
-    user_data = get_user(user_id)
+    state, temp_data = get_user_state(user_id)
     
-    if user_data.state == STATE_ADDING_FRIEND_NAME:
-        save_friend_name(message, user_data)
-    elif user_data.state == STATE_ADDING_FRIEND_BIRTHDAY:
-        save_friend_birthday(message, user_data)
+    if state == STATE_ADDING_FRIEND_NAME:
+        save_friend_name(message, user_id, temp_data)
+    elif state == STATE_ADDING_FRIEND_BIRTHDAY:
+        save_friend_birthday(message, user_id, temp_data)
     else:
         bot.reply_to(
             message,
@@ -159,7 +164,7 @@ def handle_text(message):
         )
 
 # Friend addition helpers
-def save_friend_name(message, user_data):
+def save_friend_name(message, user_id, temp_data):
     """Save the friend's name and ask for birthday."""
     friend_name = message.text.strip()
     
@@ -171,8 +176,9 @@ def save_friend_name(message, user_data):
         )
         return
     
-    user_data.temp_data["friend_name"] = friend_name
-    user_data.state = STATE_ADDING_FRIEND_BIRTHDAY
+    # Update the temp_data with the friend's name and change the state
+    temp_data["friend_name"] = friend_name
+    update_user_state(user_id, STATE_ADDING_FRIEND_BIRTHDAY, temp_data)
     
     bot.reply_to(
         message,
@@ -180,7 +186,7 @@ def save_friend_name(message, user_data):
         "For example: 15/06/1990"
     )
 
-def save_friend_birthday(message, user_data):
+def save_friend_birthday(message, user_id, temp_data):
     """Save the friend's birthday."""
     birthday_text = message.text.strip()
     
@@ -193,13 +199,28 @@ def save_friend_birthday(message, user_data):
         day, month, year = map(int, birthday_text.split('/'))
         birth_date = datetime(year, month, day)
         
-        friend_name = user_data.temp_data["friend_name"]
+        friend_name = temp_data.get("friend_name")
+        if not friend_name:
+            bot.reply_to(
+                message,
+                "Sorry, there was an error processing your request. Please try adding a friend again."
+            )
+            update_user_state(user_id, STATE_IDLE, {})
+            return
         
-        # Save the friend
-        user_data.friends[friend_name] = Friend(name=friend_name, birth_date=birth_date)
+        # Save the friend to database
+        friend = save_friend(user_id, friend_name, birth_date)
         
-        days_until = user_data.friends[friend_name].days_until_birthday()
-        next_birthday = user_data.friends[friend_name].next_birthday()
+        if not friend:
+            bot.reply_to(
+                message,
+                "Sorry, there was an error saving your friend. Please try again."
+            )
+            update_user_state(user_id, STATE_IDLE, {})
+            return
+        
+        days_until = friend.days_until_birthday()
+        next_birthday = friend.next_birthday()
         
         bot.reply_to(
             message,
@@ -209,8 +230,7 @@ def save_friend_birthday(message, user_data):
         )
         
         # Reset state
-        user_data.state = STATE_IDLE
-        user_data.temp_data = {}
+        update_user_state(user_id, STATE_IDLE, {})
         
     except (ValueError, IndexError) as e:
         logger.error(f"Error parsing birthday: {e}")
@@ -225,13 +245,14 @@ def save_friend_birthday(message, user_data):
 def handle_delete_friend_callback(call):
     """Handle friend deletion callbacks."""
     user_id = call.from_user.id
-    user_data = get_user(user_id)
     
     # Extract the friend name from callback data
     friend_name = call.data[len(DELETE_FRIEND):]
     
-    if friend_name in user_data.friends:
-        del user_data.friends[friend_name]
+    # Delete the friend from database
+    deleted = delete_friend(user_id, friend_name)
+    
+    if deleted:
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -246,13 +267,13 @@ def handle_delete_friend_callback(call):
     
     bot.answer_callback_query(call.id)
 
-def send_birthday_notification(user_id: int, friend: Friend, days_until: int) -> None:
+def send_birthday_notification(user_id: int, friend, days_until: int) -> None:
     """Send a birthday notification to a user."""
     if days_until == 0:
         # It's the birthday today
         message = f"🎂 Happy Birthday to {friend.name} today! 🎉"
     else:
-        # This shouldn't happen, but just in case
+        # This shouldn't happen since we only notify on the actual birthday
         message = f"🎂 {friend.name}'s birthday is in {days_until} days."
         
     try:

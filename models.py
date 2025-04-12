@@ -1,17 +1,57 @@
 import logging
+import json
 from datetime import datetime, timedelta
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
+
+from app import db
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy.orm import relationship
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-@dataclass
-class Friend:
-    """Class representing a friend's birthday information"""
-    name: str
-    birth_date: datetime
+# User state constants
+STATE_IDLE = "IDLE"
+STATE_ADDING_FRIEND_NAME = "ADDING_FRIEND_NAME"
+STATE_ADDING_FRIEND_BIRTHDAY = "ADDING_FRIEND_BIRTHDAY"
+
+class User(db.Model):
+    """User model representing a Telegram user"""
+    __tablename__ = 'users'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    telegram_id = db.Column(db.BigInteger, unique=True, nullable=False)
+    username = db.Column(db.String(255), nullable=True)
+    state = db.Column(db.String(50), default=STATE_IDLE)
+    temp_data = db.Column(db.Text, default="{}")
+    
+    # Relationships
+    friends = relationship("Friend", back_populates="user", cascade="all, delete-orphan")
+
+    def set_temp_data(self, data: Dict) -> None:
+        """Store temporary data as JSON"""
+        self.temp_data = json.dumps(data)
+    
+    def get_temp_data(self) -> Dict:
+        """Get temporary data from JSON"""
+        try:
+            return json.loads(self.temp_data) if self.temp_data else {}
+        except:
+            return {}
+
+
+class Friend(db.Model):
+    """Friend model representing a birthday entry"""
+    __tablename__ = 'friends'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, ForeignKey('users.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    birth_date = db.Column(db.DateTime, nullable=False)
+    
+    # Relationship back to user
+    user = relationship("User", back_populates="friends")
     
     def days_until_birthday(self) -> int:
         """Calculate days until next birthday"""
@@ -35,57 +75,135 @@ class Friend:
             
         return next_birthday
 
-@dataclass
-class NotificationPreference:
-    """Class representing notification preferences"""
-    # Only notify on the day of the birthday
-    def should_notify(self, days_until: int) -> bool:
-        """Check if a notification should be sent based on days until birthday"""
-        # Only send notifications on the actual birthday (days_until == 0)
-        return days_until == 0
 
-@dataclass
-class UserData:
-    """Class for storing user data"""
-    user_id: int
-    username: str
-    friends: Dict[str, Friend] = field(default_factory=dict)
-    notification_pref: NotificationPreference = field(default_factory=NotificationPreference)
-    state: str = "IDLE"  # Track conversation state
-    temp_data: Dict = field(default_factory=dict)  # For storing temporary data during conversations
+def get_user(telegram_id: int, username: str = None) -> User:
+    """Get or create a user by telegram_id"""
+    with db.session() as session:
+        user = session.query(User).filter(User.telegram_id == telegram_id).first()
+        
+        if not user:
+            user = User(telegram_id=telegram_id, username=username or f"user_{telegram_id}")
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+        
+        return user
 
-# In-memory database to store all user data
-users: Dict[int, UserData] = {}
 
-def get_user(user_id: int, username: str = None) -> UserData:
-    """Get or create user data"""
-    if user_id not in users:
-        users[user_id] = UserData(user_id=user_id, username=username or f"user_{user_id}")
-    return users[user_id]
-
-def get_all_users() -> List[UserData]:
+def get_all_users() -> List[User]:
     """Get all users"""
-    return list(users.values())
+    with db.session() as session:
+        return session.query(User).all()
 
-def get_upcoming_birthdays(days_ahead: int = 7) -> Dict[int, List[tuple]]:
+
+def get_upcoming_birthdays(days_ahead: int = 0) -> Dict[int, List[Tuple[Friend, int]]]:
     """
     Gets all birthdays coming up in the specified number of days
-    Returns a dict mapping user_id to list of (friend, days_until) tuples
+    Returns a dict mapping telegram_id to list of (friend, days_until) tuples
+    Only considers birthdays on the actual day (days_until == 0)
     """
     result = {}
     
-    for user_id, user_data in users.items():
-        user_birthdays = []
+    with db.session() as session:
+        users = session.query(User).all()
         
-        for friend in user_data.friends.values():
-            days_until = friend.days_until_birthday()
+        for user in users:
+            user_birthdays = []
             
-            if 0 <= days_until <= days_ahead:
-                # Check if user wants to be notified on this day
-                if user_data.notification_pref.should_notify(days_until):
-                    user_birthdays.append((friend, days_until))
-        
-        if user_birthdays:
-            result[user_id] = user_birthdays
+            for friend in user.friends:
+                days_until = friend.days_until_birthday()
+                
+                if 0 <= days_until <= days_ahead:
+                    # We only notify on the actual birthday
+                    if days_until == 0:
+                        user_birthdays.append((friend, days_until))
             
+            if user_birthdays:
+                result[user.telegram_id] = user_birthdays
+                
     return result
+
+
+def save_friend(user_id: int, name: str, birth_date: datetime) -> Friend:
+    """Create or update a friend's birthday"""
+    with db.session() as session:
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            logger.error(f"User with telegram_id {user_id} not found")
+            return None
+        
+        # Check if friend with this name already exists
+        friend = session.query(Friend).filter(
+            Friend.user_id == user.id,
+            Friend.name == name
+        ).first()
+        
+        if friend:
+            # Update existing friend
+            friend.birth_date = birth_date
+        else:
+            # Create new friend
+            friend = Friend(user_id=user.id, name=name, birth_date=birth_date)
+            session.add(friend)
+        
+        session.commit()
+        session.refresh(friend)
+        return friend
+
+
+def delete_friend(user_id: int, friend_name: str) -> bool:
+    """Delete a friend by name"""
+    with db.session() as session:
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            logger.error(f"User with telegram_id {user_id} not found")
+            return False
+        
+        friend = session.query(Friend).filter(
+            Friend.user_id == user.id,
+            Friend.name == friend_name
+        ).first()
+        
+        if friend:
+            session.delete(friend)
+            session.commit()
+            return True
+        
+        return False
+
+
+def get_user_friends(user_id: int) -> List[Friend]:
+    """Get all friends for a user"""
+    with db.session() as session:
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            logger.error(f"User with telegram_id {user_id} not found")
+            return []
+        
+        return session.query(Friend).filter(Friend.user_id == user.id).all()
+
+
+def update_user_state(user_id: int, state: str, temp_data: Dict = None) -> None:
+    """Update user state and temp data"""
+    with db.session() as session:
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            logger.error(f"User with telegram_id {user_id} not found")
+            return
+        
+        user.state = state
+        if temp_data is not None:
+            user.set_temp_data(temp_data)
+        
+        session.commit()
+
+
+def get_user_state(user_id: int) -> Tuple[str, Dict]:
+    """Get user state and temp data"""
+    with db.session() as session:
+        user = session.query(User).filter(User.telegram_id == user_id).first()
+        if not user:
+            logger.error(f"User with telegram_id {user_id} not found")
+            return STATE_IDLE, {}
+        
+        return user.state, user.get_temp_data()
