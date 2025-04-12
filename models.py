@@ -110,6 +110,16 @@ def get_all_users() -> List[User]:
         session.close()
 
 
+# Create app context wrapper functions
+
+def with_app_context(func):
+    """Decorator to run a function within the app context."""
+    def wrapper(*args, **kwargs):
+        from app import app
+        with app.app_context():
+            return func(*args, **kwargs)
+    return wrapper
+
 def get_upcoming_birthdays(days_ahead: int = 0) -> Dict[int, List[Tuple[Friend, int]]]:
     """
     Gets all birthdays coming up in the specified number of days

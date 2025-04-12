@@ -251,18 +251,18 @@ def save_friend_birthday(message, user_id, temp_data):
                 message,
                 "Sorry, there was an error processing your request. Please try adding a friend again."
             )
-            update_user_state(user_id, STATE_IDLE, {})
+            update_user_state_with_context(user_id, STATE_IDLE, {})
             return
         
-        # Save the friend to database
-        friend = save_friend(user_id, friend_name, birth_date)
+        # Save the friend to database using context-aware function
+        friend = save_friend_with_context(user_id, friend_name, birth_date)
         
         if not friend:
             bot.reply_to(
                 message,
                 "Sorry, there was an error saving your friend. Please try again."
             )
-            update_user_state(user_id, STATE_IDLE, {})
+            update_user_state_with_context(user_id, STATE_IDLE, {})
             return
         
         days_until = friend.days_until_birthday()
@@ -275,8 +275,8 @@ def save_friend_birthday(message, user_id, temp_data):
             f"You'll be notified on the day of their birthday."
         )
         
-        # Reset state
-        update_user_state(user_id, STATE_IDLE, {})
+        # Reset state with context-aware function
+        update_user_state_with_context(user_id, STATE_IDLE, {})
         
     except (ValueError, IndexError) as e:
         logger.error(f"Error parsing birthday: {e}")
@@ -295,8 +295,8 @@ def handle_delete_friend_callback(call):
     # Extract the friend name from callback data
     friend_name = call.data[len(DELETE_FRIEND):]
     
-    # Delete the friend from database
-    deleted = delete_friend(user_id, friend_name)
+    # Delete the friend from database using context-aware function
+    deleted = delete_friend_with_context(user_id, friend_name)
     
     if deleted:
         bot.edit_message_text(
