@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional, Dict, Tuple
 
 import telebot
-from telebot import TeleBot
+from telebot import TeleBot, apihelper
 from telebot import types
 
 from models import (
@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 # Bot token
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+
+# Enable middleware for better error handling
+apihelper.ENABLE_MIDDLEWARE = True
 
 # Callback query data identifiers
 DELETE_FRIEND = "delete_friend_"

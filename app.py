@@ -24,13 +24,39 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_recycle": 300,
     "pool_pre_ping": True,
 }
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # Initialize the extension with the app
 db.init_app(app)
 
+# Import models here to avoid circular imports
 # Create tables if they don't exist
 with app.app_context():
-    db.create_all()
+    # Import models after db is initialized to avoid circular imports
+    from models import User, Friend
+    
+    # Drop and recreate all tables
+    try:
+        logger.info("Dropping all tables and recreating schema...")
+        # Try to execute SQL directly to drop with CASCADE option if needed
+        db.session.execute(db.text("DROP TABLE IF EXISTS notification_preferences CASCADE"))
+        db.session.execute(db.text("DROP TABLE IF EXISTS friends CASCADE"))
+        db.session.execute(db.text("DROP TABLE IF EXISTS users CASCADE"))
+        db.session.commit()
+        
+        # Now create the tables
+        db.create_all()
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Error creating database tables: {e}")
+        db.session.rollback()
+        # If the drop fails, try just creating
+        try:
+            db.create_all()
+            logger.info("Database tables created successfully")
+        except Exception as e:
+            logger.error(f"Error creating database tables: {e}")
+            db.session.rollback()
 
 @app.route('/')
 def index():
