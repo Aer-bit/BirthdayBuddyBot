@@ -72,8 +72,14 @@ def start(message):
     first_name = message.from_user.first_name
     
     # Create or get user in the database using wrapped function
-    get_user_with_context(user_id, username)
-    logger.debug(f"Created or retrieved user: {user_id}, {username}")
+    try:
+        user = get_user_with_context(user_id, username)
+        if user:
+            logger.debug(f"Created or retrieved user: {user_id}, {username}")
+        else:
+            logger.error(f"Failed to create user: {user_id}, {username}")
+    except Exception as e:
+        logger.error(f"Error creating/retrieving user: {e}")
     
     bot.reply_to(
         message,
@@ -104,6 +110,12 @@ def help_command(message):
 def add_friend(message):
     """Start the add friend conversation."""
     user_id = message.from_user.id
+    username = message.from_user.username
+    
+    # Ensure user exists first
+    if not ensure_user_exists(user_id, username):
+        bot.reply_to(message, "Error creating your user profile. Please try /start first.")
+        return
     
     # Update user state in the database using wrapped function
     update_user_state_with_context(user_id, STATE_ADDING_FRIEND_NAME, {})
@@ -117,6 +129,13 @@ def add_friend(message):
 def list_friends(message):
     """List all friends and their birthdays."""
     user_id = message.from_user.id
+    username = message.from_user.username
+    
+    # Ensure user exists first
+    if not ensure_user_exists(user_id, username):
+        bot.reply_to(message, "Error creating your user profile. Please try /start first.")
+        return
+        
     friends = get_user_friends_with_context(user_id)
     
     if not friends:
@@ -142,6 +161,13 @@ def list_friends(message):
 def remove_friend(message):
     """Send a list of friends to remove."""
     user_id = message.from_user.id
+    username = message.from_user.username
+    
+    # Ensure user exists first
+    if not ensure_user_exists(user_id, username):
+        bot.reply_to(message, "Error creating your user profile. Please try /start first.")
+        return
+        
     friends = get_user_friends_with_context(user_id)
     
     if not friends:
@@ -168,6 +194,13 @@ def remove_friend(message):
 def settings(message):
     """Show and modify user notification settings."""
     user_id = message.from_user.id
+    username = message.from_user.username
+    
+    # Ensure user exists first
+    if not ensure_user_exists(user_id, username):
+        bot.reply_to(message, "Error creating your user profile. Please try /start first.")
+        return
+        
     settings = get_user_settings_with_context(user_id)
     
     if not settings:
@@ -428,6 +461,19 @@ def send_birthday_notification(user_id: int, friend, days_until: int) -> None:
         logger.info(f"Sent birthday notification to user {user_id} for {friend.name}")
     except Exception as e:
         logger.error(f"Error sending notification to user {user_id}: {e}")
+
+def ensure_user_exists(user_id, username=None):
+    """Ensure the user exists in the database"""
+    try:
+        user = get_user_with_context(user_id, username)
+        if user:
+            return True
+        else:
+            logger.error(f"Failed to create/retrieve user: {user_id}")
+            return False
+    except Exception as e:
+        logger.error(f"Error ensuring user exists: {e}")
+        return False
 
 def setup_bot():
     """Initialize and start the bot."""
