@@ -79,12 +79,20 @@ def help_command(message):
     )
 
 @bot.message_handler(commands=['add'])
-def add_friend(message):
+def add_friend_command(message):
     """Start the add friend conversation."""
     user_id = message.from_user.id
-    user_data = get_user(user_id)
+    username = message.from_user.username
+    user_data = get_user(user_id, username)
     user_data.state = STATE_ADDING_FRIEND_NAME
     user_data.temp_data = {}
+    
+    # Save the user state to the database
+    session = get_db_session()
+    try:
+        user_data.save(session)
+    finally:
+        session.close()
     
     bot.reply_to(
         message,
@@ -234,6 +242,13 @@ def save_friend_name(message, user_data):
     
     user_data.temp_data["friend_name"] = friend_name
     user_data.state = STATE_ADDING_FRIEND_BIRTHDAY
+    
+    # Save the user state to the database
+    session = get_db_session()
+    try:
+        user_data.save(session)
+    finally:
+        session.close()
     
     bot.reply_to(
         message,
@@ -603,13 +618,19 @@ def setup_bot():
         
     logger.info("Starting Telegram bot...")
     
-    # Generate a unique session name to prevent conflicts with multiple bot instances
+    # Generate and log a unique identifier for this bot instance
     import uuid
     import os
-    session_name = f"birthday_bot_{uuid.uuid4().hex[:8]}_{os.getpid()}"
-    logger.info(f"Using session name: {session_name}")
+    instance_id = f"birthday_bot_{uuid.uuid4().hex[:8]}_{os.getpid()}"
+    logger.info(f"Bot instance ID: {instance_id}")
     
-    # Start the bot polling in a separate thread with a unique session name
-    bot.infinity_polling(timeout=10, long_polling_timeout=5, allowed_updates=["message", "callback_query"], session_name=session_name)
+    try:
+        # Start the bot polling in a separate thread
+        bot.infinity_polling(timeout=10, long_polling_timeout=5, allowed_updates=["message", "callback_query"])
+    except Exception as e:
+        logger.error(f"Error starting bot polling: {e}")
+        # Try again with fewer parameters
+        logger.info("Retrying with minimal parameters...")
+        bot.infinity_polling()
     
     return bot
