@@ -122,15 +122,33 @@ class UserData:
         
         # Parse temp data from JSON
         try:
-            self.temp_data = json.loads(db_user.temp_data)
-        except:
+            if db_user.temp_data and db_user.temp_data.strip():
+                self.temp_data = json.loads(db_user.temp_data)
+            else:
+                self.temp_data = {}
+        except Exception as e:
+            logger.error(f"Error parsing temp_data for user {self.user_id}: {e}")
+            logger.debug(f"Raw temp_data: {db_user.temp_data!r}")
             self.temp_data = {}
     
     def save(self, session: Session) -> None:
         """Save changes back to the database"""
-        self.db_user.state = self.state
-        self.db_user.temp_data = json.dumps(self.temp_data)
-        session.commit()
+        try:
+            self.db_user.state = self.state
+            logger.debug(f"Saving state for user {self.user_id}: {self.state}")
+            logger.debug(f"Saving temp_data for user {self.user_id}: {self.temp_data}")
+            
+            # Ensure temp_data is a valid JSON-serializable dictionary
+            if self.temp_data is None:
+                self.temp_data = {}
+                
+            self.db_user.temp_data = json.dumps(self.temp_data)
+            session.commit()
+            logger.debug(f"Successfully saved user state to database")
+        except Exception as e:
+            logger.error(f"Error saving user data: {e}")
+            session.rollback()
+            raise
 
 def get_db_session() -> Session:
     """Get database session"""

@@ -250,16 +250,24 @@ def register_handlers(bot_instance):
     def handle_text(message):
         """Handle text messages based on the user's current state."""
         user_id = message.from_user.id
-        user_data = get_user(user_id)
+        username = message.from_user.username
+        user_data = get_user(user_id, username)
+        
+        logger.debug(f"Handling text message from user {user_id}, state: {user_data.state}")
+        logger.debug(f"Message text: {message.text}")
         
         if user_data.state == STATE_ADDING_FRIEND_NAME:
+            logger.debug("Processing message in STATE_ADDING_FRIEND_NAME")
             # Pass the bot instance to these helper functions
             save_friend_name(message, user_data, bot_instance)
         elif user_data.state == STATE_ADDING_FRIEND_BIRTHDAY:
+            logger.debug("Processing message in STATE_ADDING_FRIEND_BIRTHDAY")
             save_friend_birthday(message, user_data, bot_instance)
         elif user_data.state == STATE_ADDING_CUSTOM_DAY:
+            logger.debug("Processing message in STATE_ADDING_CUSTOM_DAY")
             save_custom_day(message, user_data, bot_instance)
         else:
+            logger.debug(f"Unknown state: {user_data.state}, asking user to use /help")
             bot_instance.reply_to(
                 message,
                 "I'm not sure what you want to do. Please use a command like /help to see available options."
