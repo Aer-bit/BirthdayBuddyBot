@@ -38,19 +38,11 @@ class Friend:
 @dataclass
 class NotificationPreference:
     """Class representing notification preferences"""
-    week_before: bool = False
-    day_before: bool = False
-    on_day: bool = True
-    custom_days: Set[int] = field(default_factory=set)  # Store custom days before birthday
-    
+    # Only notify on the day of the birthday
     def should_notify(self, days_until: int) -> bool:
         """Check if a notification should be sent based on days until birthday"""
-        return (
-            (self.week_before and days_until == 7) or
-            (self.day_before and days_until == 1) or
-            (self.on_day and days_until == 0) or
-            (days_until in self.custom_days)
-        )
+        # Only send notifications on the actual birthday (days_until == 0)
+        return days_until == 0
 
 @dataclass
 class UserData:

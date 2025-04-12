@@ -1,18 +1,17 @@
 import os
-import logging
 import re
+import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Optional
 
 import telebot
+from telebot import TeleBot
 from telebot import types
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from models import Friend, NotificationPreference, get_user, UserData
-from helpers import parse_date, format_date, check_valid_days_range
+from models import Friend, get_user
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Bot token
@@ -22,17 +21,8 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 STATE_IDLE = "IDLE"
 STATE_ADDING_FRIEND_NAME = "ADDING_FRIEND_NAME"
 STATE_ADDING_FRIEND_BIRTHDAY = "ADDING_FRIEND_BIRTHDAY"
-STATE_ADDING_CUSTOM_DAY = "ADDING_CUSTOM_DAY"
 
 # Callback query data identifiers
-PREF_WEEK_BEFORE = "pref_week"
-PREF_DAY_BEFORE = "pref_day"
-PREF_ON_DAY = "pref_on_day"
-PREF_CUSTOM = "pref_custom"
-PREF_DONE = "pref_done"
-ADD_CUSTOM_DAY = "add_custom"
-REMOVE_CUSTOM_DAY = "remove_custom"
-DONE_CUSTOM_DAYS = "done_custom"
 DELETE_FRIEND = "delete_friend_"
 
 # Create bot instance
@@ -52,10 +42,9 @@ def start(message):
         message,
         f"Hi {first_name}! I'm your Birthday Reminder Bot.\n\n"
         "I can help you keep track of your friends' birthdays and notify you "
-        "before they occur.\n\n"
+        "on the day of their birthday.\n\n"
         "Use /add to add a friend's birthday\n"
         "Use /list to see all your friends' birthdays\n"
-        "Use /notifications to set your notification preferences\n"
         "Use /help to see all available commands"
     )
 
@@ -69,7 +58,6 @@ def help_command(message):
         "/add - Add a friend's birthday\n"
         "/list - List all your friends' birthdays\n"
         "/remove - Remove a friend from your list\n"
-        "/notifications - Set your notification preferences\n"
         "/help - Show this help message\n"
         "/cancel - Cancel the current operation"
     )
@@ -138,45 +126,6 @@ def remove_friend(message):
         reply_markup=keyboard
     )
 
-@bot.message_handler(commands=['notifications'])
-def set_notifications(message):
-    """Set notification preferences."""
-    user_id = message.from_user.id
-    user_data = get_user(user_id)
-    
-    # Create keyboard with current preferences
-    pref = user_data.notification_pref
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    
-    keyboard.add(
-        types.InlineKeyboardButton(
-            text=f"{'✅' if pref.week_before else '❌'} One week before",
-            callback_data=PREF_WEEK_BEFORE
-        ),
-        types.InlineKeyboardButton(
-            text=f"{'✅' if pref.day_before else '❌'} One day before",
-            callback_data=PREF_DAY_BEFORE
-        ),
-        types.InlineKeyboardButton(
-            text=f"{'✅' if pref.on_day else '❌'} On the day",
-            callback_data=PREF_ON_DAY
-        ),
-        types.InlineKeyboardButton(
-            text="Custom days...",
-            callback_data=PREF_CUSTOM
-        ),
-        types.InlineKeyboardButton(
-            text="Done",
-            callback_data=PREF_DONE
-        )
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        "Set your notification preferences:",
-        reply_markup=keyboard
-    )
-
 @bot.message_handler(commands=['cancel'])
 def cancel(message):
     """Cancel the current operation."""
@@ -203,8 +152,6 @@ def handle_text(message):
         save_friend_name(message, user_data)
     elif user_data.state == STATE_ADDING_FRIEND_BIRTHDAY:
         save_friend_birthday(message, user_data)
-    elif user_data.state == STATE_ADDING_CUSTOM_DAY:
-        save_custom_day(message, user_data)
     else:
         bot.reply_to(
             message,
@@ -257,7 +204,8 @@ def save_friend_birthday(message, user_data):
         bot.reply_to(
             message,
             f"Great! I've added {friend_name}'s birthday ({day}/{month}/{year}).\n\n"
-            f"Their next birthday is in {days_until} days, on {next_birthday.strftime('%d/%m/%Y')}."
+            f"Their next birthday is in {days_until} days, on {next_birthday.strftime('%d/%m/%Y')}.\n\n"
+            f"You'll be notified on the day of their birthday."
         )
         
         # Reset state
@@ -298,281 +246,26 @@ def handle_delete_friend_callback(call):
     
     bot.answer_callback_query(call.id)
 
-@bot.callback_query_handler(func=lambda call: call.data in [PREF_WEEK_BEFORE, PREF_DAY_BEFORE, PREF_ON_DAY, PREF_DONE])
-def handle_preference_callback(call):
-    """Handle preference setting callbacks."""
-    user_id = call.from_user.id
-    user_data = get_user(user_id)
-    pref = user_data.notification_pref
-    
-    if call.data == PREF_WEEK_BEFORE:
-        pref.week_before = not pref.week_before
-        update_notification_keyboard(call, user_data)
-        
-    elif call.data == PREF_DAY_BEFORE:
-        pref.day_before = not pref.day_before
-        update_notification_keyboard(call, user_data)
-        
-    elif call.data == PREF_ON_DAY:
-        pref.on_day = not pref.on_day
-        update_notification_keyboard(call, user_data)
-        
-    elif call.data == PREF_DONE:
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="Notification preferences updated!"
-        )
-    
-    bot.answer_callback_query(call.id)
-
-def update_notification_keyboard(call, user_data):
-    """Update the notification preferences keyboard."""
-    pref = user_data.notification_pref
-    
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(
-        types.InlineKeyboardButton(
-            text=f"{'✅' if pref.week_before else '❌'} One week before",
-            callback_data=PREF_WEEK_BEFORE
-        ),
-        types.InlineKeyboardButton(
-            text=f"{'✅' if pref.day_before else '❌'} One day before",
-            callback_data=PREF_DAY_BEFORE
-        ),
-        types.InlineKeyboardButton(
-            text=f"{'✅' if pref.on_day else '❌'} On the day",
-            callback_data=PREF_ON_DAY
-        ),
-        types.InlineKeyboardButton(
-            text="Custom days...",
-            callback_data=PREF_CUSTOM
-        ),
-        types.InlineKeyboardButton(
-            text="Done",
-            callback_data=PREF_DONE
-        )
-    )
-    
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text="Set your notification preferences:",
-        reply_markup=keyboard
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == PREF_CUSTOM)
-def handle_custom_days(call):
-    """Handle custom days settings."""
-    user_id = call.from_user.id
-    user_data = get_user(user_id)
-    
-    show_custom_days(call, user_data)
-    bot.answer_callback_query(call.id)
-
-def show_custom_days(call, user_data):
-    """Show the custom days interface."""
-    pref = user_data.notification_pref
-    
-    # Display current custom days
-    custom_days_text = "No custom days set" if not pref.custom_days else \
-                       ", ".join(str(day) for day in sorted(pref.custom_days))
-    
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton(
-        text="Add custom day",
-        callback_data=ADD_CUSTOM_DAY
-    ))
-    
-    # Add remove buttons if there are custom days
-    if pref.custom_days:
-        keyboard.add(types.InlineKeyboardButton(
-            text="Remove custom day",
-            callback_data=REMOVE_CUSTOM_DAY
-        ))
-    
-    keyboard.add(types.InlineKeyboardButton(
-        text="Back to preferences",
-        callback_data=DONE_CUSTOM_DAYS
-    ))
-    
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text=f"Custom days before birthday to notify:\n{custom_days_text}\n\n"
-             "Choose an option:",
-        reply_markup=keyboard
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == ADD_CUSTOM_DAY)
-def handle_add_custom_day(call):
-    """Handle add custom day button."""
-    user_id = call.from_user.id
-    user_data = get_user(user_id)
-    
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text="Enter the number of days before the birthday when you want to be notified.\n"
-             "For example, enter '3' to be notified 3 days before."
-    )
-    
-    user_data.state = STATE_ADDING_CUSTOM_DAY
-    user_data.temp_data["message_id"] = call.message.message_id
-    
-    bot.answer_callback_query(call.id)
-
-def save_custom_day(message, user_data):
-    """Save the custom notification day."""
-    try:
-        day = int(message.text.strip())
-        
-        if not check_valid_days_range(day):
-            bot.reply_to(
-                message,
-                "Please enter a positive number of days between 1 and 365."
-            )
-            return
-        
-        # Add the custom day
-        user_data.notification_pref.custom_days.add(day)
-        
-        # Show confirmation
-        custom_days = ", ".join(str(d) for d in sorted(user_data.notification_pref.custom_days))
-        
-        bot.reply_to(
-            message,
-            f"Custom notification added for {day} days before.\n\n"
-            f"Your custom notification days: {custom_days}\n\n"
-            "Use /notifications to continue setting your preferences."
-        )
-        
-        # Try to update the previous message if it exists
-        if "message_id" in user_data.temp_data:
-            try:
-                # Try to show the updated custom days list
-                call = types.CallbackQuery(
-                    id="",
-                    from_user=message.from_user,
-                    message=types.Message(
-                        message_id=user_data.temp_data["message_id"],
-                        chat=message.chat,
-                        content_type="text",
-                        text="",
-                        date=0,
-                        from_user=None,
-                        options={}
-                    ),
-                    chat_instance="",
-                    data=None,
-                    game_short_name=None,
-                    json_string=""
-                )
-                show_custom_days(call, user_data)
-            except Exception as e:
-                logger.error(f"Error updating message: {e}")
-        
-        # Reset state
-        user_data.state = STATE_IDLE
-        user_data.temp_data = {}
-        
-    except ValueError:
-        bot.reply_to(
-            message,
-            "Please enter a valid number of days."
-        )
-
-@bot.callback_query_handler(func=lambda call: call.data == REMOVE_CUSTOM_DAY)
-def handle_remove_custom_day(call):
-    """Handle remove custom day button."""
-    user_id = call.from_user.id
-    user_data = get_user(user_id)
-    
-    # Show list of days to remove
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    
-    for day in sorted(user_data.notification_pref.custom_days):
-        keyboard.add(types.InlineKeyboardButton(
-            text=f"{day} days before",
-            callback_data=f"remove_day_{day}"
-        ))
-    
-    keyboard.add(types.InlineKeyboardButton(
-        text="Back",
-        callback_data="back_to_custom"
-    ))
-    
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text="Select a custom day to remove:",
-        reply_markup=keyboard
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("remove_day_"))
-def handle_remove_specific_day(call):
-    """Handle removing a specific custom day."""
-    user_id = call.from_user.id
-    user_data = get_user(user_id)
-    
-    # Remove the selected day
-    day = int(call.data.split("_")[-1])
-    user_data.notification_pref.custom_days.discard(day)
-    
-    show_custom_days(call, user_data)
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "back_to_custom")
-def handle_back_to_custom(call):
-    """Handle back button in custom days menu."""
-    user_id = call.from_user.id
-    user_data = get_user(user_id)
-    
-    show_custom_days(call, user_data)
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == DONE_CUSTOM_DAYS)
-def handle_done_custom_days(call):
-    """Handle done button in custom days menu."""
-    user_id = call.from_user.id
-    user_data = get_user(user_id)
-    
-    update_notification_keyboard(call, user_data)
-    bot.answer_callback_query(call.id)
-
 def send_birthday_notification(user_id: int, friend: Friend, days_until: int) -> None:
     """Send a birthday notification to a user."""
-    if not bot:
-        logger.error("Bot not initialized. Cannot send notification.")
-        return
+    if days_until == 0:
+        # It's the birthday today
+        message = f"🎂 Happy Birthday to {friend.name} today! 🎉"
+    else:
+        # This shouldn't happen, but just in case
+        message = f"🎂 {friend.name}'s birthday is in {days_until} days."
         
     try:
-        if days_until == 0:
-            message = f"🎉 Today is {friend.name}'s birthday! 🎂"
-        elif days_until == 1:
-            message = f"🔔 Reminder: Tomorrow is {friend.name}'s birthday! 🎁"
-        elif days_until == 7:
-            message = f"📆 Heads up! {friend.name}'s birthday is in one week, on {friend.next_birthday().strftime('%d/%m/%Y')}."
-        else:
-            message = f"📅 {friend.name}'s birthday is in {days_until} days, on {friend.next_birthday().strftime('%d/%m/%Y')}."
-        
-        bot.send_message(chat_id=user_id, text=message)
-        logger.info(f"Sent birthday notification to user {user_id} about {friend.name}")
-        
+        bot.send_message(user_id, message)
+        logger.info(f"Sent birthday notification to user {user_id} for {friend.name}")
     except Exception as e:
-        logger.error(f"Failed to send notification to user {user_id}: {e}")
+        logger.error(f"Error sending notification to user {user_id}: {e}")
 
 def setup_bot():
     """Initialize and start the bot."""
-    if not TELEGRAM_TOKEN:
-        logger.error("TELEGRAM_TOKEN not found in environment variables!")
-        raise ValueError("TELEGRAM_TOKEN is not set")
-        
+    if not bot:
+        logger.error("Telegram bot not initialized. TELEGRAM_TOKEN may be missing.")
+        return
+    
     logger.info("Starting Telegram bot...")
-    
-    # Start the bot polling in a separate thread
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
-    
-    return bot
+    bot.infinity_polling()
